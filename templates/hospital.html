@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hospital Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        #map { height: 400px; width: 100%; border-radius: 10px; margin-top: 15px; }
+        .leaflet-routing-container { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container wide">
+        <h1>🏥 Hospital Dashboard</h1>
+        <div id="alertBanner" class="alert-banner" style="display:none;">
+            🚨 Incoming Emergency
+        </div>
+        <div id="patientInfo" class="info-card">
+            <p>Waiting for ambulance trip...</p>
+        </div>
+        <div id="etaInfo" class="info-card" style="display:none;">
+            <p><strong>Nearest Hospital:</strong> <span id="nearestHospitalText">-</span></p>
+            <p><strong>Distance remaining:</strong> <span id="distanceText">-</span></p>
+            <p><strong>ETA:</strong> <span id="etaText">-</span></p>
+        </div>
+        <div id="map"></div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script>
+        const HOSPITALS = [
+            {lat: 13.0827, lng: 80.2707, name: "City General Hospital"},
+            {lat: 13.0569, lng: 80.2091, name: "Apollo Hospital"},
+            {lat: 13.0067, lng: 80.2206, name: "Fortis Malar Hospital"},
+            {lat: 13.1143, lng: 80.2757, name: "Stanley Medical Hospital"}
+        ];
+
+        const map = L.map('map').setView([13.06, 80.24], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const hospitalIcon = L.icon({
+            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+            iconSize: [22, 36], iconAnchor: [11, 36]
+        });
+
+        const nearestHospitalIcon = L.icon({
+            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+            iconSize: [30, 48], iconAnchor: [15, 48]
+        });
+
+        const hospitalMarkers = {};
+        HOSPITALS.forEach(h => {
+            const m = L.marker([h.lat, h.lng], {icon: hospitalIcon}).addTo(map).bindPopup(h.name);
+            hospitalMarkers[h.name] = m;
+        });
+
+        let ambulanceMarker = null;
+        let routeControl = null;
+        let currentNearestName = null;
+        let wasActive = false;
+        let announcedNearestFor = null;
+        function speak(text) {
+            if (!window.speechSynthesis) return;
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.rate = 1;
+            utter.pitch = 1;
+            window.speechSynthesis.speak(utter);
+        }
+
+        function calcDistanceKm(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 +
+                      Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+                      Math.sin(dLng/2)**2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        function fetchLatest() {
+            fetch('/api/get_latest')
+                .then(res => res.json())
+                .then(data => {
+                    const banner = document.getElementById('alertBanner');
+                    const info = document.getElementById('patientInfo');
+                    const etaBox = document.getElementById('etaInfo');
+
+                    if (data.active && !wasActive) {
+                        speak(`Emergency incoming. Patient ${data.patient_name}, condition ${data.condition}.`);
+                        announcedNearestFor = null;
+                    }
+                    if (!data.active && wasActive) {
+                        speak("Patient has arrived at the hospital.");
+                    }
+                    wasActive = data.active;
+
+                    if (data.active) {
+                        banner.style.display = 'block';
+                        info.innerHTML = `
+                            <p><strong>Patient:</strong> ${data.patient_name} (Age: ${data.age})</p>
+                            <p><strong>Condition:</strong> ${data.condition}</p>
+                            <p><strong>Status:</strong> ${data.status}</p>
+                        `;
+
+                        if (data.lat && data.lng) {
+                            const pos = [data.lat, data.lng];
+                            if (ambulanceMarker) {
+                                ambulanceMarker.setLatLng(pos);
+                            } else {
+                                ambulanceMarker = L.marker(pos).addTo(map);
+                            }
+
+                            if (data.nearest_hospital) {
+                                const nh = data.nearest_hospital;
+
+                                if (currentNearestName && currentNearestName !== nh.name) {
+                                    hospitalMarkers[currentNearestName].setIcon(hospitalIcon);
+                                }
+                                hospitalMarkers[nh.name].setIcon(nearestHospitalIcon);
+                                currentNearestName = nh.name;
+
+                                const distKm = calcDistanceKm(data.lat, data.lng, nh.lat, nh.lng);
+                                const avgSpeedKmh = 40;
+                                const etaMinutes = (distKm / avgSpeedKmh) * 60;
+
+                                document.getElementById('nearestHospitalText').innerText = nh.name;
+                                document.getElementById('distanceText').innerText = distKm.toFixed(2) + ' km';
+                                document.getElementById('etaText').innerText = Math.ceil(etaMinutes) + ' mins (approx)';
+                                etaBox.style.display = 'block';
+
+                                if (announcedNearestFor !== nh.name) {
+                                    speak(`Nearest hospital is ${nh.name}. Estimated time ${Math.ceil(etaMinutes)} minutes.`);
+                                    announcedNearestFor = nh.name;
+                                }
+
+                                if (!routeControl) {
+                                    routeControl = L.Routing.control({
+                                        waypoints: [L.latLng(data.lat, data.lng), L.latLng(nh.lat, nh.lng)],
+                                        routeWhileDragging: false,
+                                        addWaypoints: false,
+                                        draggableWaypoints: false,
+                                        createMarker: () => null,
+                                        lineOptions: { styles: [{ color: '#e53935', weight: 5 }] }
+                                    }).addTo(map);
+                                } else {
+                                    routeControl.setWaypoints([L.latLng(data.lat, data.lng), L.latLng(nh.lat, nh.lng)]);
+                                }
+
+                                map.fitBounds([[data.lat, data.lng], [nh.lat, nh.lng]], { padding: [50, 50] });
+                            }
+                        }
+                    } else {
+                        banner.style.display = 'none';
+                        etaBox.style.display = 'none';
+                        info.innerHTML = `<p>${data.status || 'Waiting for ambulance trip...'}</p>`;
+                    }
+                });
+        }
+
+        setInterval(fetchLatest, 3000);
+        fetchLatest();
+    </script>
+</body>
+</html>

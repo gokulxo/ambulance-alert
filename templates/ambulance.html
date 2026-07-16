@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ambulance - Emergency Trip</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>🚑 Ambulance Panel</h1>
+
+        <div id="formSection">
+            <h3>Patient Details</h3>
+            <input type="text" id="patientName" placeholder="Patient Name">
+            <input type="number" id="patientAge" placeholder="Age">
+            <select id="condition">
+                <option value="Accident">Accident</option>
+                <option value="Cardiac">Cardiac Issue</option>
+                <option value="Breathing">Breathing Difficulty</option>
+                <option value="Other">Other</option>
+            </select>
+            <button onclick="startTrip()" class="btn ambulance-btn">Start Emergency Trip</button>
+        </div>
+
+        <div id="trackingSection" style="display:none;">
+            <h3>🟢 Trip Active</h3>
+            <p id="statusText">Sending live location...</p>
+            <p id="coordsText"></p>
+            <button onclick="endTrip()" class="btn end-btn">End Trip / Arrived</button>
+        </div>
+    </div>
+
+    <script>
+        let watchId = null;
+
+        function startTrip() {
+            const patient_name = document.getElementById('patientName').value;
+            const age = document.getElementById('patientAge').value;
+            const condition = document.getElementById('condition').value;
+
+            if (!patient_name || !age) {
+                alert("Please fill patient name and age");
+                return;
+            }
+
+            fetch('/api/start_trip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ patient_name, age, condition })
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('formSection').style.display = 'none';
+                document.getElementById('trackingSection').style.display = 'block';
+                startGPSTracking();
+            });
+        }
+
+        function startGPSTracking() {
+            if (!navigator.geolocation) {
+                document.getElementById('statusText').innerText = "GPS not supported on this device";
+                return;
+            }
+
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    document.getElementById('coordsText').innerText =
+                        `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
+
+                    fetch('/api/update_location', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat, lng })
+                    });
+                },
+                (error) => {
+                    document.getElementById('statusText').innerText = "GPS error: " + error.message;
+                },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+            );
+        }
+
+        function endTrip() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            fetch('/api/end_trip', { method: 'POST' })
+                .then(() => {
+                    alert("Trip ended. Patient arrived at hospital.");
+                    location.reload();
+                });
+        }
+    </script>
+</body>
+</html>

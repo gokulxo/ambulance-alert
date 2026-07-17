@@ -24,6 +24,7 @@
 
         <div id="trackingSection" style="display:none;">
             <h3>🟢 Trip Active</h3>
+            <p id="tripIdText" style="font-size:13px;color:#888;"></p>
             <p id="statusText">Sending live location...</p>
             <p id="coordsText"></p>
             <button onclick="endTrip()" class="btn end-btn">End Trip / Arrived</button>
@@ -32,6 +33,7 @@
 
     <script>
         let watchId = null;
+        let currentTripId = null;
 
         function startTrip() {
             const patient_name = document.getElementById('patientName').value;
@@ -50,8 +52,10 @@
             })
             .then(res => res.json())
             .then(data => {
+                currentTripId = data.trip_id;
                 document.getElementById('formSection').style.display = 'none';
                 document.getElementById('trackingSection').style.display = 'block';
+                document.getElementById('tripIdText').innerText = 'Trip ID: ' + currentTripId;
                 startGPSTracking();
             });
         }
@@ -73,7 +77,7 @@
                     fetch('/api/update_location', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ lat, lng })
+                        body: JSON.stringify({ trip_id: currentTripId, lat, lng })
                     });
                 },
                 (error) => {
@@ -87,7 +91,11 @@
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
             }
-            fetch('/api/end_trip', { method: 'POST' })
+            fetch('/api/end_trip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trip_id: currentTripId })
+            })
                 .then(() => {
                     alert("Trip ended. Patient arrived at hospital.");
                     location.reload();

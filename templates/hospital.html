@@ -71,7 +71,6 @@
 
                     const activeIds = new Set(trips.map(t => t.trip_id));
 
-                    // Remove markers for trips no longer active
                     Object.keys(ambulanceMarkers).forEach(id => {
                         if (!activeIds.has(id)) {
                             map.removeLayer(ambulanceMarkers[id]);
@@ -99,6 +98,11 @@
                             }
                         }
                     });
+
+                    const validCoords = trips.filter(t => t.lat && t.lng).map(t => [t.lat, t.lng]);
+                    if (validCoords.length > 0) {
+                        map.fitBounds(validCoords, {padding: [50, 50], maxZoom: 12});
+                    }
                 });
         }
 
